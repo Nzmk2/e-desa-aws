@@ -1,8 +1,7 @@
 const express = require("express");
 const multer = require("multer");
-const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client } = require("@aws-sdk/client-s3");
 const { Upload } = require("@aws-sdk/lib-storage");
-const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const pool = require("../db");
 const { auth, adminOnly } = require("../middleware/auth");
 
@@ -24,14 +23,14 @@ const VALID_TYPES = [
   "Surat Pengantar Nikah",
 ];
 
-// helper: signed URL untuk dokumen (privasi KTP/KK)
-async function makeSignedUrl(key) {
+function makeCloudFrontUrl(key) {
   if (!key) return null;
-  return getSignedUrl(
-    s3,
-    new GetObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }),
-    { expiresIn: 60 * 15 } // 15 menit
-  );
+  const cf = (process.env.CLOUDFRONT_URL || "").replace(/\/$/, "");
+  if (!cf) {
+    console.warn("[warn] CLOUDFRONT_URL belum di-set, fallback ke S3 langsung");
+    return `https://${process.env.S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+  }
+  return `${cf}/${key}`;
 }
 
 // ===== POST /api/requests : ajukan surat =====
@@ -81,7 +80,6 @@ router.post("/", auth, upload.single("file"), async (req, res) => {
   }
 });
 
-// ===== GET /api/requests/mine : permohonan milik user yg login =====
 router.get("/mine", auth, async (req, res) => {
   const [rows] = await pool.query(
     `SELECT id, type, purpose, status, created_at, updated_at
@@ -91,7 +89,6 @@ router.get("/mine", auth, async (req, res) => {
   res.json(rows);
 });
 
-// ===== GET /api/requests/track/:id : tracking publik (tanpa login) =====
 router.get("/track/:id", async (req, res) => {
   const [rows] = await pool.query(
     `SELECT r.id, r.type, r.status, r.created_at, r.updated_at, r.admin_notes,
@@ -110,7 +107,6 @@ router.get("/track/:id", async (req, res) => {
   res.json({ ...rows[0], history });
 });
 
-// ===== GET /api/requests/:id : detail (owner atau admin) =====
 router.get("/:id", auth, async (req, res) => {
   const [rows] = await pool.query(
     `SELECT r.*, u.name AS pemohon, u.email AS pemohon_email, u.nik, u.phone, u.address
@@ -129,11 +125,10 @@ router.get("/:id", auth, async (req, res) => {
     [req.params.id]
   );
 
-  const document_url = await makeSignedUrl(r.document_key);
+  const document_url = makeCloudFrontUrl(r.document_key);
   res.json({ ...r, document_url, history });
 });
 
-// ===== GET /api/requests : list semua (admin) =====
 router.get("/", auth, adminOnly, async (req, res) => {
   const { status, type } = req.query;
   let sql = `SELECT r.id, r.type, r.status, r.created_at, r.updated_at,
@@ -149,7 +144,6 @@ router.get("/", auth, adminOnly, async (req, res) => {
   res.json(rows);
 });
 
-// ===== PUT /api/requests/:id/status : admin update =====
 router.put("/:id/status", auth, adminOnly, async (req, res) => {
   try {
     const { status, notes } = req.body;
@@ -172,7 +166,6 @@ router.put("/:id/status", auth, adminOnly, async (req, res) => {
   }
 });
 
-// ===== GET /api/requests/:id/document : download/lihat dokumen (signed URL) =====
 router.get("/:id/document", auth, async (req, res) => {
   const [rows] = await pool.query(
     "SELECT user_id, document_key FROM requests WHERE id=?",
@@ -182,11 +175,10 @@ router.get("/:id/document", auth, async (req, res) => {
   if (req.user.role !== "admin" && rows[0].user_id !== req.user.id) {
     return res.status(403).json({ error: "Tidak diizinkan" });
   }
-  const url = await makeSignedUrl(rows[0].document_key);
+  const url = makeCloudFrontUrl(rows[0].document_key);
   res.json({ url });
 });
 
-// ===== GET /api/requests/types/list : daftar jenis surat =====
 router.get("/types/list", (req, res) => res.json(VALID_TYPES));
 
 module.exports = router;
