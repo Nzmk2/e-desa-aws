@@ -1,0 +1,60 @@
+name: Deploy Frontend to ECS
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-southeast-2
+  ECR_REPOSITORY: ets2-cloud-repo-frontend
+  ECS_CLUSTER: ets2-cloud-cluster
+  ECS_SERVICE: ets2-cloud-frontend-service
+  # URL ALB - dipakai sebagai REACT_APP_API_URL saat build React
+  # Bisa juga dipindah ke GitHub Secrets jika ingin private
+  API_URL: http://ets2-cloud-alb-644748574.ap-southeast-2.elb.amazonaws.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push frontend image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --build-arg REACT_APP_API_URL=${API_URL} \
+            -t $REGISTRY/${ECR_REPOSITORY}:$IMAGE_TAG \
+            -t $REGISTRY/${ECR_REPOSITORY}:latest \
+            ./frontend
+          docker push $REGISTRY/${ECR_REPOSITORY}:$IMAGE_TAG
+          docker push $REGISTRY/${ECR_REPOSITORY}:latest
+
+      - name: Deploy frontend to ECS
+        run: |
+          aws ecs update-service \
+            --cluster ${ECS_CLUSTER} \
+            --service ${ECS_SERVICE} \
+            --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster ${ECS_CLUSTER} \
+            --services ${ECS_SERVICE}
