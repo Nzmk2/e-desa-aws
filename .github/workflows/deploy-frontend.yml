@@ -13,9 +13,7 @@ env:
   ECR_REPOSITORY: ets2-cloud-repo-frontend
   ECS_CLUSTER: ets2-cloud-cluster
   ECS_SERVICE: ets2-cloud-frontend-service
-  # URL ALB - dipakai sebagai REACT_APP_API_URL saat build React
-  # Bisa juga dipindah ke GitHub Secrets jika ingin private
-  API_URL: http://ets2-cloud-alb-644748574.ap-southeast-2.elb.amazonaws.com
+  API_URL: https://d1z3d8zb4n54sf.cloudfront.net
 
 jobs:
   deploy:
